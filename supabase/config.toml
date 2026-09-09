@@ -1,0 +1,16 @@
+project_id = "rental-desk-mvp"
+
+[auth]
+site_url = "https://marstee88.github.io/rental-desk-mvp/"
+additional_redirect_urls = ["http://localhost:5173/rental-desk-mvp/"]
+enable_signup = false
+minimum_password_length = 12
+
+[auth.email]
+enable_signup = false
+enable_confirmations = true
+
+[functions.manage-staff]
+# New projects use asymmetric signing keys. The handler verifies the token
+# with auth.getUser() and checks active owner membership before any action.
+verify_jwt = false

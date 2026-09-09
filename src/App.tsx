@@ -1,99 +1,71 @@
-import { useMemo, useState } from 'react'
-import { bookings, investments, payments, rooms } from './data'
-import { getMetrics, money } from './metrics'
-import type { Payment, Room } from './types'
-import './styles.css'
-
-const metrics = getMetrics(rooms, payments)
-const outstanding = payments
-  .filter((payment) => payment.paid < payment.due)
-  .map((payment) => ({ payment, room: rooms.find((room) => room.id === payment.roomId)! }))
-  .sort((a, b) => a.payment.dueDate.localeCompare(b.payment.dueDate) || b.payment.due - a.payment.due)
-
-function MetricCard({ label, value, note, tone }: { label: string; value: string; note?: string; tone?: 'alert' | 'accent' }) {
-  return <article className={`metric-card ${tone ?? ''}`}><span>{label}</span><strong>{value}</strong>{note && <small>{note}</small>}</article>
-}
+import { useEffect, useState, type FormEvent } from 'react'
+import type { Session } from '@supabase/supabase-js'
+import DemoDashboard from './DemoDashboard'
+import { supabase, appUrl } from './cloud/client'
+import { messageOf } from './cloud/domain'
+import { LiveDashboard } from './cloud/LiveDashboard'
+import './cloud/cloud.css'
 
 export default function App() {
-  const [property, setProperty] = useState('all')
-  const [paymentState, setPaymentState] = useState('all')
-  const [expiringOnly, setExpiringOnly] = useState(false)
-  const [query, setQuery] = useState('')
-  const [selected, setSelected] = useState<LedgerItem | null>(null)
-  const collectionRate = (metrics.collected / metrics.due) * 100
-  const filteredOutstanding = useMemo(() => outstanding.filter((item) => {
-    const isOverdue = item.payment.dueDate < '2026-09-09'
-    const isExpiring = Boolean(item.room.contractEnd && item.room.contractEnd <= '2026-10-09')
-    const haystack = `${item.room.id} ${item.room.property} ${item.room.tenant?.name ?? ''}`.toLowerCase()
-    return (property === 'all' || item.room.property === property)
-      && (paymentState === 'all' || (paymentState === 'overdue' && isOverdue) || (paymentState === 'partial' && item.payment.status === 'partial'))
-      && (!expiringOnly || isExpiring)
-      && (!query.trim() || haystack.includes(query.trim().toLowerCase()))
-  }), [property, paymentState, expiringOnly, query])
-
-  const clearFilters = () => {
-    setProperty('all')
-    setPaymentState('all')
-    setExpiringOnly(false)
-    setQuery('')
+  const [session, setSession] = useState<Session | null>(null)
+  const [loading, setLoading] = useState(Boolean(supabase))
+  const [mode, setMode] = useState<'demo' | 'login'>('demo')
+  const [setup, setSetup] = useState(new URLSearchParams(window.location.search).get('account') === 'setup')
+  const [logoutError, setLogoutError] = useState('')
+  useEffect(() => {
+    if (!supabase) return
+    let alive = true
+    const { data } = supabase.auth.onAuthStateChange((event, next) => {
+      if (!alive) return
+      setSession(next); setLoading(false)
+      if (event === 'PASSWORD_RECOVERY' || (next?.user.invited_at && !next.user.user_metadata.password_set)) setSetup(true)
+      if (next) setMode('login')
+    })
+    supabase.auth.getSession().then(({ data, error }) => { if (alive) { setSession(error ? null : data.session); setLoading(false) } }).catch(() => { if (alive) setLoading(false) })
+    return () => { alive = false; data.subscription.unsubscribe() }
+  }, [])
+  async function logout() {
+    setSession(null); setSetup(false); setMode('login'); setLogoutError('')
+    const result = await supabase?.auth.signOut({ scope: 'local' })
+    if (result?.error) setLogoutError('页面资料已清除，但退出请求未完成，请检查网络后再次退出。')
   }
-  return <main>
-    <header className="page-header">
-      <div><p className="eyebrow">Rental Desk <span>房源管理工作台 / Overview</span></p><h1>租房管理总览</h1></div>
-      <p className="demo-note">演示模式 · 模拟资料<br />2026 年 9 月 · MYR</p>
-    </header>
-
-    <section className="hero"><p>掌握出租情况，让每一笔租金都清楚。</p><span>数据截至 2026-09-09</span></section>
-
-    <section className="metric-grid" aria-label="租房核心指标">
-      <MetricCard label="Total Rooms / 房间总数" value={String(metrics.total)} />
-      <MetricCard label="Occupied / 已出租" value={String(metrics.occupied)} note={`${((metrics.occupied / metrics.total) * 100).toFixed(1)}% 入住率`} tone="accent" />
-      <MetricCard label="Vacant / 空房" value={String(metrics.vacant)} />
-      <MetricCard label="Monthly Rent Due / 本月应收" value={money(metrics.due)} />
-      <MetricCard label="Collected / 本月已收" value={money(metrics.collected)} tone="accent" />
-      <MetricCard label="Outstanding / 本月未收" value={money(metrics.outstanding)} note="待跟进" tone="alert" />
-      <MetricCard label="Overdue Tenants / 逾期租客" value={String(metrics.overdue)} tone="alert" />
-      <MetricCard label="Expiring Contracts / 30 天内到期" value={String(metrics.expiring)} />
-    </section>
-
-    <section className="collection-card">
-      <div><p className="eyebrow">September Collection</p><h2>本月收租进度</h2><strong>{money(metrics.collected)}</strong><span>已收 · 尚有 {metrics.outstandingPayments} 位租客未结清</span></div>
-      <div className="progress-wrap"><b>{collectionRate.toFixed(1)}%</b><div className="progress"><i style={{ width: `${collectionRate}%` }} /></div><small>其中 {metrics.overdue} 位已超过付款日期</small></div>
-    </section>
-
-    <section className="split-grid">
-      <article className="panel"><div className="panel-heading"><div><p className="eyebrow">Bookings</p><h2>房间预订 <em>{bookings.length}</em></h2></div><span>待付定金 2 位 · 已确认 1 位</span></div><BookingTable /></article>
-      <article className="panel"><div className="panel-heading"><div><p className="eyebrow">Partner Returns</p><h2>合作投资分成</h2></div><span>按净收益分成</span></div><InvestmentTable /></article>
-    </section>
-
-    <section className="ledger panel"><div className="panel-heading"><div><p className="eyebrow">Outstanding Ledger</p><h2>欠款租客 <em>{filteredOutstanding.length}</em></h2></div><span>按付款到期日、欠款金额排列</span></div><LedgerFilters property={property} paymentState={paymentState} expiringOnly={expiringOnly} query={query} onProperty={setProperty} onPaymentState={setPaymentState} onExpiringOnly={setExpiringOnly} onQuery={setQuery} onClear={clearFilters} /><LedgerTable items={filteredOutstanding} onSelect={setSelected} /></section>
-    {selected && <TenantPanel item={selected} onClose={() => setSelected(null)} />}
-    <footer>Rental Desk · {metrics.total} 间房，一目了然。所有姓名、房间与金额均为模拟资料。</footer>
-  </main>
+  if (loading) return <main><p role="status">正在检查登录状态…</p></main>
+  if (session && setup) return <PasswordSetup onDone={() => { setSetup(false); window.history.replaceState(null, '', appUrl()) }} onLogout={logout} />
+  if (session) return <LiveDashboard key={session.user.id} onLogout={logout} />
+  if (mode === 'demo') return <><div className="mode-bar"><span>公开演示 · 仅含模拟资料</span><button className="primary" onClick={() => setMode('login')}>登录正式管理</button></div><DemoDashboard /></>
+  return <main className="login-page"><section className="panel login-card"><p className="eyebrow">租房管理工作台</p><h1>登录正式管理</h1><p className="muted">登录后可新增房间和租客，资料在手机与电脑同步。</p>
+    {logoutError && <p role="alert" className="form-error">{logoutError}<button onClick={logout}>再次退出</button></p>}
+    {supabase ? <LoginForm /> : <p role="status" className="setup-note">正式管理尚未启用。管理员完成云端连接后，即可在这里登录使用。</p>}
+    <button className="text-button" onClick={() => setMode('demo')}>返回公开演示</button>
+  </section></main>
 }
 
-function BookingTable() { return <div className="table-scroll"><table><thead><tr><th>房号 / 租客</th><th>计划入住</th><th>应付 / 已收定金</th><th>预订状态</th></tr></thead><tbody>{bookings.map((booking) => <tr key={booking.roomId}><td><b>{booking.roomId}</b><br /><span>{booking.tenant}</span></td><td>{booking.moveIn}</td><td>{money(booking.depositDue)}<br /><span>已收 {money(booking.depositPaid)}</span></td><td><mark className={booking.depositPaid ? 'ok' : ''}>{booking.depositPaid ? '已确认 · 待入住' : '待付定金'}</mark></td></tr>)}</tbody></table></div> }
-
-function InvestmentTable() { return <div className="table-scroll"><table><thead><tr><th>合作方 / 房间</th><th>已收租金</th><th>成本 / 费用</th><th>可分净收益</th><th>合作方分成</th></tr></thead><tbody>{investments.map((item) => { const net = item.collected - item.rentCost - item.expenses; return <tr key={item.partner}><td><b>{item.partner}</b><br /><span>{item.rooms}</span></td><td>{money(item.collected)}</td><td>{money(item.rentCost)}<br /><span>费用 {money(item.expenses)}</span></td><td>{money(net)}</td><td>{money(net * item.partnerRate)}<br /><span>净收益 × {item.partnerRate * 100}%</span></td></tr> })}</tbody></table></div> }
-
-type LedgerItem = { payment: Payment; room: Room }
-
-function LedgerFilters({ property, paymentState, expiringOnly, query, onProperty, onPaymentState, onExpiringOnly, onQuery, onClear }: {
-  property: string; paymentState: string; expiringOnly: boolean; query: string
-  onProperty: (value: string) => void; onPaymentState: (value: string) => void; onExpiringOnly: (value: boolean) => void; onQuery: (value: string) => void; onClear: () => void
-}) {
-  return <div className="ledger-filters">
-    <label><span>房源</span><select aria-label="房源筛选" value={property} onChange={(event) => onProperty(event.target.value)}><option value="all">全部房源</option>{[...new Set(rooms.map((room) => room.property))].map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
-    <label><span>付款状态</span><select aria-label="付款状态筛选" value={paymentState} onChange={(event) => onPaymentState(event.target.value)}><option value="all">全部欠款</option><option value="overdue">已逾期</option><option value="partial">部分付款</option></select></label>
-    <label className="search-filter"><span>查找租客</span><input aria-label="搜索房号或租客" value={query} onChange={(event) => onQuery(event.target.value)} placeholder="房号或租客姓名" /></label>
-    <label className="check-filter"><input aria-label="30 天内到期" type="checkbox" checked={expiringOnly} onChange={(event) => onExpiringOnly(event.target.checked)} />30 天内到期</label>
-    <button className="clear-filters" type="button" onClick={onClear}>清除筛选</button>
-  </div>
+function LoginForm() {
+  const [email, setEmail] = useState(''), [password, setPassword] = useState(''), [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false)
+  async function login(e: FormEvent) {
+    e.preventDefault(); setBusy(true); setError(''); setNotice('')
+    try { const { error } = await supabase!.auth.signInWithPassword({ email: email.trim(), password }); if (error) throw error }
+    catch (reason) { setError(messageOf(reason)) } finally { setBusy(false) }
+  }
+  async function reset() {
+    if (!email.trim()) { setError('请先填写邮箱。'); return }
+    setBusy(true); setError(''); setNotice('')
+    try { const { error } = await supabase!.auth.resetPasswordForEmail(email.trim(), { redirectTo: `${appUrl()}?account=setup` }); if (error) throw error; setNotice('若此邮箱已有账号，将收到密码重设邮件，请检查收件箱。') }
+    catch (reason) { setError(messageOf(reason)) } finally { setBusy(false) }
+  }
+  return <form onSubmit={login}><fieldset disabled={busy} className="entry-fields"><label>邮箱<input type="email" required autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} /></label><label>密码<input type="password" required autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} /></label></fieldset>
+    {error && <p role="alert" className="form-error">{error}</p>}{notice && <p role="status">{notice}</p>}
+    <button className="primary wide" disabled={busy}>{busy ? '请稍候…' : '登录'}</button><button className="text-button" type="button" disabled={busy} onClick={reset}>忘记密码</button></form>
 }
 
-function LedgerTable({ items, onSelect }: { items: LedgerItem[]; onSelect: (item: LedgerItem) => void }) { return <div className="table-scroll"><table><thead><tr><th>房号 / Room</th><th>租客 / Tenant</th><th>应收</th><th>已付</th><th>欠款</th><th>付款到期日</th><th>状态</th></tr></thead><tbody>{items.length ? items.map((item) => { const { payment, room } = item; const balance = payment.due - payment.paid; const overdue = payment.dueDate < '2026-09-09'; return <tr key={room.id}><td><b>{room.id}</b><br /><span>{room.property}</span></td><td><button className="tenant-button" type="button" onClick={() => onSelect(item)}>{room.tenant?.name}</button></td><td>{money(payment.due)}</td><td>{money(payment.paid)}</td><td className="balance">{money(balance)}</td><td>{payment.dueDate}</td><td><mark className={overdue ? 'late' : 'ok'}>{overdue ? '已逾期' : '未到期'}</mark></td></tr> }) : <tr><td className="empty-state" colSpan={7}>没有符合当前筛选条件的欠款租客。</td></tr>}</tbody></table></div> }
-
-function TenantPanel({ item, onClose }: { item: LedgerItem; onClose: () => void }) {
-  const { room, payment } = item
-  return <div className="drawer-backdrop" role="presentation" onMouseDown={onClose}><aside className="tenant-drawer" role="dialog" aria-label="租客明细" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}><button className="drawer-close" type="button" aria-label="关闭租客明细" onClick={onClose}>×</button><p className="eyebrow">Tenant detail</p><h2>{room.tenant?.name}</h2><p className="drawer-room">{room.id} · {room.property}</p><dl><div><dt>联系电话</dt><dd>{room.tenant?.phone}</dd></div><div><dt>本月欠款</dt><dd className="balance">{money(payment.due - payment.paid)}</dd></div><div><dt>付款到期日</dt><dd>{payment.dueDate}</dd></div><div><dt>合约到期日</dt><dd>{room.contractEnd}</dd></div></dl><p className="drawer-note">演示资料，仅供 Rent Desk MVP 测试。</p></aside></div>
+function PasswordSetup({ onDone, onLogout }: { onDone: () => void; onLogout: () => void }) {
+  const [password, setPassword] = useState(''), [confirm, setConfirm] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false)
+  async function save(e: FormEvent) {
+    e.preventDefault(); setError('')
+    if (password.length < 12 || password !== confirm) { setError('密码至少 12 个字符，且两次输入必须一致。'); return }
+    setBusy(true)
+    try { const { error } = await supabase!.auth.updateUser({ password, data: { password_set: true } }); if (error) throw error; onDone() }
+    catch (reason) { setError(messageOf(reason)) } finally { setBusy(false) }
+  }
+  return <main className="login-page"><section className="panel login-card"><h1>设置登录密码</h1><form onSubmit={save}><fieldset disabled={busy} className="entry-fields"><label>新密码<input type="password" required minLength={12} autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} /></label><label>确认新密码<input type="password" required minLength={12} autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)} /></label></fieldset>{error && <p role="alert">{error}</p>}<button className="primary" disabled={busy}>{busy ? '保存中…' : '保存密码并继续'}</button></form><button className="text-button" disabled={busy} onClick={onLogout}>退出登录</button></section></main>
 }

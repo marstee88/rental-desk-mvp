@@ -1,0 +1,52 @@
+// Manual release check. Only disposable qa-* accounts; no real user passwords.
+import { chromium } from '@playwright/test'
+import assert from 'node:assert/strict'
+const browser = await chromium.launch()
+try {
+  for (const [role, email, width] of [['staff', process.env.QA_STAFF_EMAIL, 390], ['owner', process.env.QA_OWNER_EMAIL, 1280]]) {
+    assert.match(email, /^qa-.*@example\.invalid$/)
+    const context = await browser.newContext({ viewport: { width, height: 900 } })
+    const page = await context.newPage()
+    await page.goto('http://127.0.0.1:5181/rental-desk-mvp/')
+    await page.getByRole('button', { name: '登录正式管理' }).click()
+    await page.getByLabel('邮箱', { exact: true }).fill(email)
+    await page.getByLabel('密码', { exact: true }).fill(process.env.QA_PASSWORD)
+    await page.getByRole('button', { name: '登录', exact: true }).click()
+    await page.getByRole('heading', { name: '租房管理工作台' }).waitFor({ timeout: 30000 })
+    assert.equal(await page.getByRole('heading', { name: '合作投资分成' }).count(), role === 'owner' ? 1 : 0)
+    if (role === 'staff') {
+      await page.getByRole('button', { name: '＋ 新增房间', exact: true }).click()
+      await page.getByLabel('所属房源').selectOption('')
+      await page.getByLabel('新房源名称').fill(`QA-浏览器-${Date.now()}`)
+      await page.getByLabel('房号', { exact: true }).fill('QA-102')
+      await page.getByLabel('月租（MYR）', { exact: true }).fill('900')
+      await page.getByRole('button', { name: '保存房间', exact: true }).click()
+      await page.getByRole('dialog').waitFor({ state: 'hidden', timeout: 30000 })
+      await page.getByRole('button', { name: '＋ 新增租客', exact: true }).click()
+      const roomValue = await page.getByRole('option').filter({ hasText: 'QA-102' }).getAttribute('value')
+      await page.getByLabel('入住空房').selectOption(roomValue)
+      await page.getByLabel('租客姓名').fill('QA浏览器测试租客')
+      await page.getByLabel('联系电话').fill('00000000')
+      await page.getByLabel('合约到期日').fill('2099-12-31')
+      await page.getByLabel('首期应收（MYR）').fill('400')
+      await page.getByLabel('首期已付（MYR）').fill('100')
+      await page.getByRole('button', { name: '保存租客与首期账单' }).click()
+      await page.getByRole('dialog').waitFor({ state: 'hidden', timeout: 30000 })
+    }
+    await page.getByRole('button', { name: '租客管理', exact: true }).click()
+    await page.getByRole('button', { name: 'QA浏览器测试租客', exact: true }).click()
+    await page.getByRole('dialog').waitFor()
+    assert.ok((await page.getByRole('dialog').textContent()).includes('300.00'))
+    await page.getByRole('button', { name: '关闭租客明细' }).click()
+    await page.reload()
+    await page.getByRole('button', { name: '租客管理', exact: true }).click()
+    await page.getByRole('button', { name: 'QA浏览器测试租客', exact: true }).waitFor()
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    await page.screenshot({ path: `test-results/real-cloud-${role}.png`, fullPage: true })
+    await page.getByRole('button', { name: '退出登录', exact: true }).click()
+    await page.getByRole('heading', { name: '登录正式管理', exact: true }).waitFor()
+    assert.equal(await page.getByText('QA浏览器测试租客').count(), 0)
+    await context.close()
+  }
+  console.log('PASS: two real cloud accounts, separate browser sessions, mobile create room/tenant, cross-account reads, reload, details, role visibility, logout.')
+} finally { await browser.close() }
