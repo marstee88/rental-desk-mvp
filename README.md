@@ -23,7 +23,7 @@ pnpm test:e2e
 2. 在 SQL Editor 执行 `supabase/migrations/202609090001_rental_management.sql`，或使用已连接该项目的 Supabase CLI 迁移。迁移只在新项目执行一次。
 3. 关闭 Auth 的公开注册，最低密码长度设为 12。站点 URL 设为 `https://marstee88.github.io/rental-desk-mvp/`，允许邀请/恢复跳转到该 URL 的 `?account=setup` 页面；本机测试可另外允许 `http://127.0.0.1:5173/rental-desk-mvp/?account=setup`。
 4. 通过 Supabase Auth 邀请或建立本人账号。核对本人邮箱及 Auth 用户 UUID，再由项目管理员执行下方初始化 SQL。不要将真实邮箱或 UUID 写入仓库。
-5. 在 Edge Functions 发布 `supabase/functions/manage-staff/index.ts`，函数名 `manage-staff`，保留 JWT 验证。`APP_URL` 为正式网页根路径，服务端使用平台提供的 `SUPABASE_SERVICE_ROLE_KEY`。本机跨域调试额外设置 `EXTRA_ALLOWED_ORIGINS=http://127.0.0.1:5173`。
+5. 在 Edge Functions 发布 `supabase/functions/manage-staff/index.ts`，函数名 `manage-staff`。关闭仅兼容旧签名的「Verify JWT with legacy secret」；函数自身通过 `auth.getUser(token)` 校验登录，再查询有效管理员身份，未通过检查的请求无法操作。`APP_URL` 为正式网页根路径，服务端使用平台提供的 `SUPABASE_SERVICE_ROLE_KEY`。本机跨域调试额外设置 `EXTRA_ALLOWED_ORIGINS=http://127.0.0.1:5173`。
 6. 配置本人拥有的 SMTP 发信服务，验证邀请与密码恢复邮件。Supabase 默认发信服务有限制，不能将默认邮件测试成功当作任意员工邀请已可用。管理员在正式页面填写员工邮箱并主动点击「发送员工邀请」。
 7. GitHub 仓库 **Settings → Secrets and variables → Actions → Variables** 设置 `VITE_SUPABASE_URL`、`VITE_SUPABASE_PUBLISHABLE_KEY`。只使用公开客户端 key，不能使用 secret/service-role key。本机在未纳入版本控制的 `.env.local` 设置同名变量。
 8. 管理员和员工分别登录验证权限及保存功能，再审阅合并 PR。Pages 自动构建发布；首次发布前邮件链接可能仍打开旧演示页，可在发布后重新请求密码恢复邮件。

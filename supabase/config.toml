@@ -11,4 +11,6 @@ enable_signup = false
 enable_confirmations = true
 
 [functions.manage-staff]
-verify_jwt = true
+# New projects use asymmetric signing keys. The handler verifies the token
+# with auth.getUser() and checks active owner membership before any action.
+verify_jwt = false

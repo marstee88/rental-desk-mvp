@@ -18,7 +18,7 @@ export default function App() {
     const { data } = supabase.auth.onAuthStateChange((event, next) => {
       if (!alive) return
       setSession(next); setLoading(false)
-      if (event === 'PASSWORD_RECOVERY') setSetup(true)
+      if (event === 'PASSWORD_RECOVERY' || (next?.user.invited_at && !next.user.user_metadata.password_set)) setSetup(true)
       if (next) setMode('login')
     })
     supabase.auth.getSession().then(({ data, error }) => { if (alive) { setSession(error ? null : data.session); setLoading(false) } }).catch(() => { if (alive) setLoading(false) })
@@ -64,7 +64,7 @@ function PasswordSetup({ onDone, onLogout }: { onDone: () => void; onLogout: () 
     e.preventDefault(); setError('')
     if (password.length < 12 || password !== confirm) { setError('密码至少 12 个字符，且两次输入必须一致。'); return }
     setBusy(true)
-    try { const { error } = await supabase!.auth.updateUser({ password }); if (error) throw error; onDone() }
+    try { const { error } = await supabase!.auth.updateUser({ password, data: { password_set: true } }); if (error) throw error; onDone() }
     catch (reason) { setError(messageOf(reason)) } finally { setBusy(false) }
   }
   return <main className="login-page"><section className="panel login-card"><h1>设置登录密码</h1><form onSubmit={save}><fieldset disabled={busy} className="entry-fields"><label>新密码<input type="password" required minLength={12} autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} /></label><label>确认新密码<input type="password" required minLength={12} autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)} /></label></fieldset>{error && <p role="alert">{error}</p>}<button className="primary" disabled={busy}>{busy ? '保存中…' : '保存密码并继续'}</button></form><button className="text-button" disabled={busy} onClick={onLogout}>退出登录</button></section></main>
